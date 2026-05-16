@@ -32,7 +32,13 @@ DATA_FILTERS = {
     "aria-fold-clothes": DatasetFilter(
         filter_lambdas=[
             "lambda row: row.get('embodiment') == 'aria'",
-            "lambda row: row.get('task') == 'fold_clothes'",
+            "lambda row: row.get('task') == 'sort_utensils'",
+        ]
+    ),
+    "mecka-adjusting": DatasetFilter(
+        filter_lambdas=[
+            "lambda row: row.get('embodiment') == 'mecka'",
+            "lambda row: row.get('task').startswith('adjusting')",
         ]
     ),
     "aria-all": DatasetFilter(
@@ -49,6 +55,11 @@ DATA_FILTERS = {
         filter_lambdas=[
             "lambda row: row.get('embodiment') == 'mecka'",
             "lambda row: row.get('task') == 'fold_clothes'",
+        ]
+    ),
+    "cup_on_saucer_failure": DatasetFilter(
+        filter_lambdas=[
+            "lambda row: row.get('task') == 'cup_on_saucer_failure'",
         ]
     ),
 }

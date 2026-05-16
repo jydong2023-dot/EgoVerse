@@ -45,3 +45,6 @@ annotations_test/**
 log_conversion/**
 debug_model_inputs/**
 temp_dir/**
+data/
+videos/
+lerobot_output/

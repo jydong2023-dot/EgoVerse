@@ -148,9 +148,9 @@ def _check_equal_dict(left: dict, right: dict, path: str = "root") -> None:
                 f"{key_path}: expected both values to be tensor/ndarray, "
                 f"got {type(left_value)} vs {type(right_value)}"
             )
-            assert left_np.shape == right_np.shape, (
-                f"{key_path}: shape mismatch {left_np.shape} vs {right_np.shape}"
-            )
+            assert (
+                left_np.shape == right_np.shape
+            ), f"{key_path}: shape mismatch {left_np.shape} vs {right_np.shape}"
 
             if np.issubdtype(left_np.dtype, np.floating) or np.issubdtype(
                 right_np.dtype, np.floating
@@ -168,9 +168,9 @@ def _check_equal_dict(left: dict, right: dict, path: str = "root") -> None:
                 )
             continue
 
-        assert left_value == right_value, (
-            f"{key_path}: value mismatch {left_value!r} vs {right_value!r}"
-        )
+        assert (
+            left_value == right_value
+        ), f"{key_path}: value mismatch {left_value!r} vs {right_value!r}"
 
 
 def _build_zarr_dataset_eva() -> MultiDataset:
@@ -277,14 +277,14 @@ def test_zarr_batch_matches_lerobot_batch_eva() -> None:
     lerobot_batch = _first_batch(_build_lerobot_dataset())
 
     missing_keys = [key for key in KEYS_TO_COMPARE if key not in lerobot_batch]
-    assert not missing_keys, (
-        f"Lerobot batch missing keys required for comparison: {missing_keys}"
-    )
+    assert (
+        not missing_keys
+    ), f"Lerobot batch missing keys required for comparison: {missing_keys}"
 
     missing_zarr_keys = [key for key in KEYS_TO_COMPARE if key not in zarr_batch]
-    assert not missing_zarr_keys, (
-        f"Zarr batch missing keys required for comparison: {missing_zarr_keys}"
-    )
+    assert (
+        not missing_zarr_keys
+    ), f"Zarr batch missing keys required for comparison: {missing_zarr_keys}"
 
     zarr_subset = {key: zarr_batch[key] for key in KEYS_TO_COMPARE}
     lerobot_subset = {key: lerobot_batch[key] for key in KEYS_TO_COMPARE}
@@ -298,9 +298,9 @@ def test_zarr_batch_matches_lerobot_batch_eva() -> None:
             f"{key}: expected array/tensor values, got {type(lerobot_subset[key])} "
             f"and {type(zarr_subset[key])}"
         )
-        assert lerobot_arr.shape == zarr_arr.shape, (
-            f"{key}: image shape mismatch {lerobot_arr.shape} vs {zarr_arr.shape}"
-        )
+        assert (
+            lerobot_arr.shape == zarr_arr.shape
+        ), f"{key}: image shape mismatch {lerobot_arr.shape} vs {zarr_arr.shape}"
 
     non_image_lerobot = {
         key: value for key, value in lerobot_subset.items() if key not in IMAGE_KEYS
@@ -314,9 +314,9 @@ def test_zarr_batch_matches_lerobot_batch_eva() -> None:
     assert isinstance(lerobot_actions, np.ndarray) and isinstance(
         zarr_actions, np.ndarray
     ), "actions_cartesian must be tensors/arrays"
-    assert lerobot_actions.shape == zarr_actions.shape, (
-        f"actions_cartesian shape mismatch: {lerobot_actions.shape} vs {zarr_actions.shape}"
-    )
+    assert (
+        lerobot_actions.shape == zarr_actions.shape
+    ), f"actions_cartesian shape mismatch: {lerobot_actions.shape} vs {zarr_actions.shape}"
 
     np.testing.assert_allclose(
         lerobot_actions,
@@ -337,14 +337,14 @@ def test_zarr_batch_matches_lerobot_batch_aria() -> None:
     lerobot_batch = _first_batch(_build_lerobot_dataset_aria())
 
     missing_keys = [key for key in ARIA_KEYS_TO_COMPARE if key not in lerobot_batch]
-    assert not missing_keys, (
-        f"Lerobot Aria batch missing keys required for comparison: {missing_keys}"
-    )
+    assert (
+        not missing_keys
+    ), f"Lerobot Aria batch missing keys required for comparison: {missing_keys}"
 
     missing_zarr_keys = [key for key in ARIA_KEYS_TO_COMPARE if key not in zarr_batch]
-    assert not missing_zarr_keys, (
-        f"Zarr Aria batch missing keys required for comparison: {missing_zarr_keys}"
-    )
+    assert (
+        not missing_zarr_keys
+    ), f"Zarr Aria batch missing keys required for comparison: {missing_zarr_keys}"
 
     zarr_subset = {key: zarr_batch[key] for key in ARIA_KEYS_TO_COMPARE}
     lerobot_subset = {key: lerobot_batch[key] for key in ARIA_KEYS_TO_COMPARE}
@@ -358,9 +358,9 @@ def test_zarr_batch_matches_lerobot_batch_aria() -> None:
             f"{key}: expected array/tensor values, got {type(lerobot_subset[key])} "
             f"and {type(zarr_subset[key])}"
         )
-        assert lerobot_arr.shape == zarr_arr.shape, (
-            f"{key}: image shape mismatch {lerobot_arr.shape} vs {zarr_arr.shape}"
-        )
+        assert (
+            lerobot_arr.shape == zarr_arr.shape
+        ), f"{key}: image shape mismatch {lerobot_arr.shape} vs {zarr_arr.shape}"
 
     non_image_lerobot = {
         key: value
@@ -442,14 +442,12 @@ def test_zarr_batch_matches_lerobot_batch_scale() -> None:
         lerobot_val = _to_numpy(lerobot_batch[lerobot_key])
 
         if zarr_key in SCALE_IMAGE_KEYS:
-            assert isinstance(zarr_val, np.ndarray) and isinstance(
-                lerobot_val, np.ndarray
-            ), (
-                f"{zarr_key}: expected arrays, got {type(zarr_val)} / {type(lerobot_val)}"
-            )
-            assert zarr_val.shape == lerobot_val.shape, (
-                f"{zarr_key}: image shape mismatch {zarr_val.shape} vs {lerobot_val.shape}"
-            )
+            assert (
+                isinstance(zarr_val, np.ndarray) and isinstance(lerobot_val, np.ndarray)
+            ), f"{zarr_key}: expected arrays, got {type(zarr_val)} / {type(lerobot_val)}"
+            assert (
+                zarr_val.shape == lerobot_val.shape
+            ), f"{zarr_key}: image shape mismatch {zarr_val.shape} vs {lerobot_val.shape}"
         else:
             assert isinstance(zarr_val, np.ndarray) and isinstance(
                 lerobot_val, np.ndarray

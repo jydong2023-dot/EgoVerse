@@ -233,11 +233,13 @@ class DataSchematic(object):
 
         if embodiment not in self.norm_stats:
             self.norm_stats[embodiment] = {}
-        
+
         # Load precomputed norm stats if available
         if precomputed_norm_path is not None:
             if os.path.isdir(precomputed_norm_path):
-                precomputed_file = os.path.join(precomputed_norm_path, "norm_stats.json")
+                precomputed_file = os.path.join(
+                    precomputed_norm_path, "norm_stats.json"
+                )
             elif os.path.isfile(precomputed_norm_path):
                 precomputed_file = precomputed_norm_path
             else:
@@ -248,8 +250,12 @@ class DataSchematic(object):
             if os.path.isfile(precomputed_file):
                 with open(precomputed_file, "r") as f:
                     precomputed_norm_stats = json.load(f)
-                    self.norm_stats[embodiment] = precomputed_norm_stats["stats"].get(str(embodiment), {})
-                    self._norm_run_metadata = precomputed_norm_stats.get("norm_run_metadata", None)
+                    self.norm_stats[embodiment] = precomputed_norm_stats["stats"].get(
+                        str(embodiment), {}
+                    )
+                    self._norm_run_metadata = precomputed_norm_stats.get(
+                        "norm_run_metadata", None
+                    )
                     logger.info(
                         f"[NormStats] Loaded precomputed stats for embodiment={embodiment} from {precomputed_file}"
                     )
@@ -326,7 +332,13 @@ class DataSchematic(object):
         )
 
     def _collect_norm_samples(
-        self, loader, norm_keys, embodiment, n_samples: int, batch_size: int, num_workers: int
+        self,
+        loader,
+        norm_keys,
+        embodiment,
+        n_samples: int,
+        batch_size: int,
+        num_workers: int,
     ):
         collected = {k: [] for k in norm_keys}
         cur_num_samples = 0

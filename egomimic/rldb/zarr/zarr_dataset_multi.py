@@ -27,7 +27,7 @@ import random
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
 import numpy as np
 import pandas as pd
@@ -158,6 +158,75 @@ def get_fallback_idx(
     if attempts >= max_attempts or not valid_candidates:
         raise RuntimeError(exhausted_error)
     return random.choice(valid_candidates), attempts
+
+
+def _jpeg_payload_to_bytes(jpeg_payload: Any) -> bytes:
+    """Normalize zarr / numpy JPEG field payload to raw JPEG bytes."""
+    if isinstance(jpeg_payload, np.ndarray):
+        if jpeg_payload.dtype == object or jpeg_payload.ndim == 0:
+            jpeg_payload = jpeg_payload.item()
+        else:
+            return cast(bytes, jpeg_payload.tobytes())
+    if isinstance(jpeg_payload, memoryview):
+        return jpeg_payload.tobytes()
+    if isinstance(jpeg_payload, bytearray):
+        return bytes(jpeg_payload)
+    if isinstance(jpeg_payload, bytes):
+        return jpeg_payload
+    raise TypeError(f"JPEG payload must be bytes-like, got {type(jpeg_payload)}")
+
+
+def decode_jpeg_rgb(jpeg_payload: Any) -> np.ndarray:
+    """
+    Decode JPEG to uint8 (H, W, 3) RGB.
+
+    Uses ``simplejpeg`` first, then Pillow, then OpenCV — some captures confuse
+    libjpeg-turbo's header parser (``subsampling level`` errors).
+    """
+    raw = _jpeg_payload_to_bytes(jpeg_payload)
+    if len(raw) == 0:
+        raise ValueError(
+            "JPEG payload is empty (0 bytes). This zarr episode stores no image bytes under "
+            "the image key — often an incomplete export or a pipeline that skipped RGB. "
+            "Re-run conversion with images enabled, or load an HF/LeRobot copy that "
+            "includes observations.images.*."
+        )
+    try:
+        return simplejpeg.decode_jpeg(raw, colorspace="RGB")
+    except Exception:
+        pass
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        im = Image.open(BytesIO(raw))
+        im = im.convert("RGB")
+        return np.asarray(im, dtype=np.uint8)
+    except Exception:
+        pass
+    try:
+        import cv2
+
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise ValueError("cv2.imdecode returned None")
+        return np.asarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), dtype=np.uint8)
+    except Exception as e:
+        raise ValueError(
+            f"JPEG decode failed for {len(raw)} bytes (simplejpeg/PIL/cv2): {e}"
+        ) from e
+
+
+class _ZarrResample(Exception):
+    """Retry loading another frame without deep recursion (see ZarrDataset.__getitem__)."""
+
+    __slots__ = ("next_idx", "attempts")
+
+    def __init__(self, next_idx: int, attempts: int):
+        self.next_idx = next_idx
+        self.attempts = attempts
 
 
 class EpisodeResolver:
@@ -485,7 +554,6 @@ class LocalEpisodeResolver(EpisodeResolver):
         transform_list: list | None = None,
         debug: int | bool | None = None,
         norm_stats: dict | None = None,
-        debug=False,
     ):
         super().__init__(folder_path, key_map, transform_list, norm_stats=norm_stats)
         self.debug = debug
@@ -964,10 +1032,28 @@ class ZarrDataset(torch.utils.data.Dataset):
         _fallback_origin: int | None = None,
         _attempts: int | None = None,
     ) -> dict[str, torch.Tensor]:
-        # Build keys_dict with ranges based on whether action chunking is enabled
         """
-        ZarrDataset handles jpeg decoding and transform function errors, and triggers resample on dataset level.
+        ZarrDataset handles jpeg decoding and transform function errors, and triggers
+        resample on dataset level. Resampling uses a loop (not recursion) so large
+        ``total_frames`` cannot exhaust the Python stack.
         """
+        work_idx = idx
+        attempts = _attempts or 0
+        origin = _fallback_origin if _fallback_origin is not None else idx
+
+        while True:
+            try:
+                return self._getitem_impl(work_idx, origin, attempts)
+            except _ZarrResample as rs:
+                work_idx = rs.next_idx
+                attempts = rs.attempts
+
+    def _getitem_impl(
+        self,
+        idx: int,
+        origin: int,
+        attempts: int,
+    ) -> dict[str, torch.Tensor]:
         data = {}
         for k in self.key_map:
             zarr_key = self.key_map[k]["zarr_key"]
@@ -988,32 +1074,25 @@ class ZarrDataset(torch.utils.data.Dataset):
             self._pad_sequences(raw_data, horizon)  # should be able to pad images
             data[k] = raw_data[zarr_key]
 
-            # Decode JPEG-encoded image data and normalize to [0, 1]
-            # print(f"Print the image_keys: {self._image_keys}")
             if zarr_key in self._image_keys:
-                jpeg_bytes = data[k]
-                # Decode JPEG bytes to numpy array (H, W, 3)
+                jpeg_payload = data[k]
                 try:
-                    decoded = simplejpeg.decode_jpeg(jpeg_bytes, colorspace="RGB")
-                except Exception:
-                    origin = _fallback_origin if _fallback_origin is not None else idx
-                    next_idx, attempts = get_fallback_idx(
+                    decoded = decode_jpeg_rgb(jpeg_payload)
+                except Exception as decode_exc:
+                    next_idx, new_attempts = get_fallback_idx(
                         idx=idx,
                         candidates=range(self.total_frames),
-                        _attempts=_attempts,
+                        _attempts=attempts,
                         max_attempts=self.total_frames,
                         exhausted_error=(
                             f"Entire episode bad (no valid indices): ep={Path(self.episode_path).name}"
                         ),
                     )
                     logger.warning(
-                        f"JPEG decode failed ep={Path(self.episode_path).name} frame={idx} key={k} | "
-                        f"attempt {attempts}, trying random idx {next_idx}"
+                        f"JPEG decode failed ep={Path(self.episode_path).name} frame={idx} key={k} "
+                        f"(origin={origin}) | attempt {new_attempts}, trying random idx {next_idx}: {decode_exc}"
                     )
-                    result = self.__getitem__(
-                        next_idx, _fallback_origin=origin, _attempts=attempts
-                    )
-                    return result
+                    raise _ZarrResample(next_idx, new_attempts) from decode_exc
                 data[k] = np.transpose(decoded, (2, 0, 1)) / 255.0
             elif zarr_key in self._json_keys:
                 if isinstance(data[k], np.ndarray):
@@ -1021,32 +1100,25 @@ class ZarrDataset(torch.utils.data.Dataset):
                 else:
                     data[k] = self._decode_json_entry(data[k])
 
-        # Convert all numpy arrays in data to torch tensors
-
-        # TODO add the transform list code here
         if self.transform:
             for transform in self.transform or []:
                 try:
                     data = transform.transform(data)
                 except Exception as e:
-                    origin = _fallback_origin if _fallback_origin is not None else idx
-                    next_idx, attempts = get_fallback_idx(
+                    next_idx, new_attempts = get_fallback_idx(
                         idx=idx,
                         candidates=range(self.total_frames),
-                        _attempts=_attempts,
+                        _attempts=attempts,
                         max_attempts=self.total_frames,
                         exhausted_error=(
                             f"Entire episode bad (no valid indices): ep={Path(self.episode_path).name}"
                         ),
                     )
                     logger.warning(
-                        f"Transform failed ep={Path(self.episode_path).name} frame={idx} ({type(e).__name__}: {e}) | "
-                        f"attempt {attempts}, trying random idx {next_idx}"
+                        f"Transform failed ep={Path(self.episode_path).name} frame={idx} ({type(e).__name__}: {e}) "
+                        f"(origin={origin}) | attempt {new_attempts}, trying random idx {next_idx}"
                     )
-                    result = self.__getitem__(
-                        next_idx, _fallback_origin=origin, _attempts=attempts
-                    )
-                    return result
+                    raise _ZarrResample(next_idx, new_attempts) from e
 
         for k, v in data.items():
             if isinstance(v, np.ndarray):

@@ -280,6 +280,7 @@ def _viz_keypoints(
 ):
     """Visualize all 21 MANO keypoints per hand, projected onto the image."""
     alpha = kwargs.get("alpha", 1.0)
+    vis_line = kwargs.get("vis_line", True)
     image = _prepare_viz_image(image)
 
     intrinsics = INTRINSICS[intrinsics_key]
@@ -315,15 +316,16 @@ def _viz_keypoints(
         valid &= (kps_px[:, 0] >= 0) & (kps_px[:, 0] < w)
         valid &= (kps_px[:, 1] >= 0) & (kps_px[:, 1] < h)
 
-        # Draw skeleton edges (colored by finger)
-        for finger, start, end in edge_ranges:
-            color = colors[finger]
-            for edge_idx in range(start, end):
-                i, j = edges[edge_idx]
-                if valid[i] and valid[j]:
-                    p1 = (int(kps_px[i, 0]), int(kps_px[i, 1]))
-                    p2 = (int(kps_px[j, 0]), int(kps_px[j, 1]))
-                    cv2.line(vis, p1, p2, color, 2)
+        if vis_line:
+            # Draw skeleton edges (colored by finger)
+            for finger, start, end in edge_ranges:
+                color = colors[finger]
+                for edge_idx in range(start, end):
+                    i, j = edges[edge_idx]
+                    if valid[i] and valid[j]:
+                        p1 = (int(kps_px[i, 0]), int(kps_px[i, 1]))
+                        p2 = (int(kps_px[j, 0]), int(kps_px[j, 1]))
+                        cv2.line(vis, p1, p2, color, 2)
 
         # Draw keypoint dots on top
         for k in range(21):
@@ -332,8 +334,45 @@ def _viz_keypoints(
                 cv2.circle(vis, center, 4, hand_dot_color, -1)
                 cv2.circle(vis, center, 4, (255, 255, 255), 1)  # white border
 
-        # Label wrist
-        if valid[0]:
+        labeled_raw = kwargs.get("labeled_keypoint_indices")
+        labeled_set: set[int] | None = (
+            {int(x) for x in labeled_raw} if labeled_raw is not None else None
+        )
+
+        # Numbered labels for explicitly requested MANO indices (per hand).
+        if labeled_set:
+            hand_ch = hand[0].upper()
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale = 0.45
+            for k in sorted(labeled_set):
+                if k < 0 or k >= 21 or not valid[k]:
+                    continue
+                sx = int(kps_px[k, 0]) + 5
+                sy = max(12, int(kps_px[k, 1]) - 5)
+                txt = f"{hand_ch}{k}"
+                cv2.putText(
+                    vis,
+                    txt,
+                    (sx, sy),
+                    font,
+                    scale,
+                    (0, 0, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    vis,
+                    txt,
+                    (sx, sy),
+                    font,
+                    scale,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+        # Short wrist tag when wrist is not labeled with joint index 0
+        if valid[0] and (labeled_set is None or 0 not in labeled_set):
             wrist_px = (int(kps_px[0, 0]) + 6, int(kps_px[0, 1]) - 6)
             cv2.putText(
                 vis,
