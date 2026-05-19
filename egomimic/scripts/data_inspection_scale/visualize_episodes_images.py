@@ -142,7 +142,9 @@ class ImageChunkReader:
         if not chunk_path.is_file():
             raise FileNotFoundError(f"Missing chunk file {chunk_path}")
         raw = chunk_path.read_bytes()
-        return _decode_vlen_zstd_codecs(raw, self.meta["codecs"], self._zstd, self._vlen)
+        return _decode_vlen_zstd_codecs(
+            raw, self.meta["codecs"], self._zstd, self._vlen
+        )
 
 
 class ImageShardReader:

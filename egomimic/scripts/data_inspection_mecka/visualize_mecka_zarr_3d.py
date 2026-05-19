@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from egomimic.scripts.mecka_process.zarr_to_lerobot3 import (  # noqa: E402
+from egomimic.scripts.data_inspection_mecka.zarr_to_lerobot3 import (  # noqa: E402
     DEFAULT_INPUT_ZARR,
     decode_numeric_sharded_array,
     load_json,

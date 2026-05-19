@@ -287,13 +287,15 @@ class EgoVerseEpisodeReader:
             elif isinstance(payload, np.ndarray):
                 decoded = payload.reshape(chunk_shape)
             else:
-                decoded = np.frombuffer(payload, dtype=np.dtype(meta["data_type"])).reshape(
-                    chunk_shape
-                )
+                decoded = np.frombuffer(
+                    payload, dtype=np.dtype(meta["data_type"])
+                ).reshape(chunk_shape)
 
             out_slices = []
             decoded_slices = []
-            for coord, chunk, dim in zip(chunk_coords, chunk_shape, shape, strict=False):
+            for coord, chunk, dim in zip(
+                chunk_coords, chunk_shape, shape, strict=False
+            ):
                 start = coord * chunk
                 stop = min(start + chunk, dim)
                 if start >= dim:

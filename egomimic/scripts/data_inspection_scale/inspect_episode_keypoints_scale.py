@@ -134,7 +134,9 @@ def intrinsics_matrix_from_dict(params: dict[str, Any]) -> np.ndarray:
     )
 
 
-def load_episode_camera_intrinsics(episode_dir: Path) -> tuple[np.ndarray, tuple[float, float]]:
+def load_episode_camera_intrinsics(
+    episode_dir: Path,
+) -> tuple[np.ndarray, tuple[float, float]]:
     """Load Scale episode camera intrinsics from zarr metadata, with script defaults as fallback."""
     attrs = load_json(episode_dir / "zarr.json").get("attributes", {})
     camera_intrinsics = attrs.get("camera_intrinsics")
@@ -170,9 +172,7 @@ def scale_intrinsics_for_image_shape(
     return scaled
 
 
-def register_scale_intrinsics(
-    episode_dir: Path, image_shape: tuple[int, ...]
-) -> str:
+def register_scale_intrinsics(episode_dir: Path, image_shape: tuple[int, ...]) -> str:
     """Register Scale camera intrinsics, scaled to the current image resolution."""
     base_intrinsics, source_size = load_episode_camera_intrinsics(episode_dir)
     INTRINSICS[SCALE_INTRINSICS_KEY] = scale_intrinsics_for_image_shape(
