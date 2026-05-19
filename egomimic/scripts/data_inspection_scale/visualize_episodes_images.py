@@ -9,6 +9,15 @@ Expected layout per episode folder (same as ``split_data`` output):
     <episode>/zarr.json
     <episode>/images.<name>/zarr.json + c/...
 
+Image arrays may use either Zarr v3 layout:
+* **Format 1 (per-chunk files):** ``chunk_shape=[1]``, codecs ``vlen-bytes`` + ``zstd``,
+  one file per frame under ``c/0``, ``c/1``, ...
+* **Format 2 (sharding_indexed):** outer shard in ``c/0`` (or ``c/0``, ``c/1``, ...),
+  inner ``chunk_shape=[1]`` with an index table at the end of each shard file.
+
+When ``total_frames`` is present in the episode ``zarr.json`` attributes, that value is
+used instead of the padded array ``shape[0]`` (common for sharded exports).
+
 Each episode may contain multiple ``images.*`` keys (dtype jpeg in group attributes).
 By default MP4 files are named after the episode folder (``{episode_folder}.mp4``) and saved under
 ``/home/djy/EgoVerse/data/videos`` (override with ``--output-dir``). Multiple camera streams become
@@ -62,6 +71,29 @@ def _shard_path_for_outer_1d(array_dir: Path, outer_idx: int) -> Path:
     return array_dir / "c" / str(outer_idx)
 
 
+MAX_UINT64 = 2**64 - 1
+
+
+def _decode_vlen_zstd_codecs(
+    raw: bytes, codec_specs: list[dict], zstd: Zstd, vlen: VLenBytes
+) -> bytes:
+    payload: bytes | np.ndarray = raw
+    for spec in reversed(codec_specs):
+        name = spec["name"]
+        config = spec.get("configuration", {})
+        if name == "zstd":
+            payload = zstd.decode(payload)  # type: ignore[arg-type]
+        elif name == "vlen-bytes":
+            payload = vlen.decode(np.frombuffer(payload, dtype=np.uint8))  # type: ignore[arg-type]
+        elif name == "bytes":
+            continue
+        else:
+            raise NotImplementedError(f"Unsupported codec {name!r}")
+    if isinstance(payload, np.ndarray):
+        return payload.item() if payload.ndim == 0 else bytes(payload[0])
+    return bytes(payload[0]) if isinstance(payload, (list, tuple)) else bytes(payload)
+
+
 def _infer_outer_shard_paths(array_dir: Path, num_outer: int) -> list[Path]:
     """Resolve ``c/<i>`` files for i in 0..num_outer-1 (1-D storage layout)."""
     paths = [_shard_path_for_outer_1d(array_dir, i) for i in range(num_outer)]
@@ -88,6 +120,31 @@ def _infer_outer_shard_paths(array_dir: Path, num_outer: int) -> list[Path]:
     return sorted(cand, key=rel_key)
 
 
+class ImageChunkReader:
+    """JPEG ``variable_length_bytes`` stored as one Zarr chunk file per frame (no sharding)."""
+
+    def __init__(self, array_dir: Path, length: int | None = None):
+        meta = load_json(array_dir / "zarr.json")
+        self.meta = meta
+        shape_tuple = tuple(int(x) for x in meta["shape"])
+        if len(shape_tuple) != 1:
+            raise ValueError(f"Expected 1-D image array, shape={shape_tuple}")
+        array_length = shape_tuple[0]
+        self.length = array_length if length is None else min(int(length), array_length)
+        self._array_dir = array_dir
+        self._zstd = Zstd()
+        self._vlen = VLenBytes()
+
+    def get(self, index: int) -> bytes:
+        if index < 0 or index >= self.length:
+            raise IndexError(index)
+        chunk_path = self._array_dir / "c" / str(index)
+        if not chunk_path.is_file():
+            raise FileNotFoundError(f"Missing chunk file {chunk_path}")
+        raw = chunk_path.read_bytes()
+        return _decode_vlen_zstd_codecs(raw, self.meta["codecs"], self._zstd, self._vlen)
+
+
 class ImageShardReader:
     """JPEG ``variable_length_bytes`` with ``sharding_indexed``, inner chunk one frame.
 
@@ -96,13 +153,14 @@ class ImageShardReader:
     and where multiple slabs ``c/0``, ``c/1``, ... exist for longer recordings.
     """
 
-    def __init__(self, array_dir: Path):
+    def __init__(self, array_dir: Path, length: int | None = None):
         meta = load_json(array_dir / "zarr.json")
         self.meta = meta
         shape_tuple = tuple(int(x) for x in meta["shape"])
         if len(shape_tuple) != 1:
             raise ValueError(f"Expected 1-D image array, shape={shape_tuple}")
-        self.length = shape_tuple[0]
+        array_length = shape_tuple[0]
+        self.length = array_length if length is None else min(int(length), array_length)
 
         outer_cfg = tuple(
             int(x) for x in meta["chunk_grid"]["configuration"]["chunk_shape"]
@@ -166,9 +224,30 @@ class ImageShardReader:
 
         raw, entries = self._load_outer(outer_idx)
         offset, nbytes = entries[inner_idx]
+        if (
+            offset == MAX_UINT64
+            or nbytes == MAX_UINT64
+            or nbytes == 0
+            or index >= self.length
+        ):
+            raise IndexError(f"frame {index} is an unused shard slot")
         payload = raw[int(offset) : int(offset + nbytes)]
-        decoded = self._zstd.decode(payload)
-        return self._vlen.decode(decoded)[0]
+        inner_codecs = self.meta["codecs"][0]["configuration"]["codecs"]
+        return _decode_vlen_zstd_codecs(payload, inner_codecs, self._zstd, self._vlen)
+
+
+def open_image_reader(array_dir: Path, length: int | None = None):
+    """Return a reader for either per-chunk or sharding_indexed JPEG zarr image arrays."""
+    meta = load_json(array_dir / "zarr.json")
+    if meta.get("data_type") != "variable_length_bytes":
+        raise ValueError(
+            f"Expected variable_length_bytes image array at {array_dir}, "
+            f"got {meta.get('data_type')!r}"
+        )
+    codec_name = meta["codecs"][0]["name"]
+    if codec_name == "sharding_indexed":
+        return ImageShardReader(array_dir, length=length)
+    return ImageChunkReader(array_dir, length=length)
 
 
 def decode_jpeg_rgb(jpeg_payload: bytes) -> np.ndarray:
@@ -224,8 +303,11 @@ def encode_episode_images(
     overwrite: bool,
 ) -> None:
     group_meta = load_json(episode_dir / "zarr.json")
-    feats = group_meta.get("attributes", {}).get("features", {})
-    task_fps = float(group_meta.get("attributes", {}).get("fps") or fps)
+    attrs = group_meta.get("attributes", {})
+    feats = attrs.get("features", {})
+    task_fps = float(attrs.get("fps") or fps)
+    total_frames = attrs.get("total_frames")
+    frame_count = int(total_frames) if total_frames is not None else None
 
     keys = (
         list_image_keys(feats)
@@ -248,7 +330,7 @@ def encode_episode_images(
             print(f"[skip] missing {img_dir}")
             continue
 
-        reader = ImageShardReader(img_dir)
+        reader = open_image_reader(img_dir, length=frame_count)
         n = reader.length if max_frames is None else min(reader.length, max_frames)
 
         if output_style == "videos_flat":
@@ -290,7 +372,7 @@ def main() -> None:
         "--root",
         type=Path,
         default=Path(
-            "/home/djy/EgoVerse/data/mecka/adjusting_food/69b8af8660d293cbaaaf6e02/"
+            "/home/djy/EgoVerse/data/scale/flagship_scoop_granular/2026-05-01-06-57-26-956787/"
         ),
         help="Directory containing split episode folders",
     )
@@ -298,7 +380,7 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=Path(
-            "/home/djy/EgoVerse/videos/mecka/adjusting_food/69b8af8660d293cbaaaf6e02/"
+            "/home/djy/EgoVerse/data/scale/flagship_scoop_granular/2026-05-01-06-57-26-956787/"
         ),
         help="Destination directory when --output-style videos_flat (created if missing)",
     )

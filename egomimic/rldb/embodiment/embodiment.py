@@ -42,8 +42,17 @@ def get_embodiment(index):
 
 
 def get_embodiment_id(embodiment_name):
-    embodiment_name = embodiment_name.upper()
-    return EMBODIMENT[embodiment_name].value
+    key = str(embodiment_name).upper().replace("-", "_")
+    if key not in EMBODIMENT.__members__:
+        bimanual_key = f"{key}_BIMANUAL"
+        if bimanual_key in EMBODIMENT.__members__:
+            key = bimanual_key
+        else:
+            valid = sorted(EMBODIMENT.__members__.keys())
+            raise KeyError(
+                f"Unknown embodiment {embodiment_name!r}. Expected one of: {valid}"
+            )
+    return EMBODIMENT[key].value
 
 
 class Embodiment(ABC):

@@ -33,7 +33,7 @@ mpy.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
 
 
 DEFAULT_EPISODE = Path(
-    "/home/djy/EgoVerse/data/mecka/fold-clothes/692e6de65aae241ad236e7e3"
+    "/home/djy/EgoVerse/data/scale/flagship_scoop_granular/2026-05-02-19-09-32-836802"
 )
 DEFAULT_OUTPUT = Path("/home/djy/EgoVerse/data/keypoint_inspection/keypoints_traj.mp4")
 
